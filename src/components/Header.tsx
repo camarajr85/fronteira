@@ -4,17 +4,19 @@
  */
 
 import React, { useState } from 'react';
-import { Search, ShoppingCart, User, Bell, Shield, Menu } from 'lucide-react';
+import { Search, ShoppingCart, User, Bell, Shield, Menu, LogOut } from 'lucide-react';
 
 interface HeaderProps {
   currentProfile: 'shopper' | 'courier' | 'admin';
   onChangeProfile: (profile: 'shopper' | 'courier' | 'admin') => void;
-  shopperRoute: 'home' | 'results' | 'detail';
-  onChangeShopperRoute: (route: 'home' | 'results' | 'detail') => void;
+  shopperRoute: 'home' | 'results' | 'detail' | 'orders' | 'login';
+  onChangeShopperRoute: (route: 'home' | 'results' | 'detail' | 'orders' | 'login') => void;
   onSearch: (query: string) => void;
   cartCount: number;
   onOpenCart: () => void;
   searchQuery: string;
+  currentUser: { id: string; email: string; name: string; role: 'shopper' | 'courier' | 'admin'; documentId?: string; avatar?: string } | null;
+  onLogout: () => void;
 }
 
 export default function Header({
@@ -25,7 +27,9 @@ export default function Header({
   onSearch,
   cartCount,
   onOpenCart,
-  searchQuery
+  searchQuery,
+  currentUser,
+  onLogout
 }: HeaderProps) {
   const [localQuery, setLocalQuery] = useState(searchQuery);
 
@@ -62,6 +66,16 @@ export default function Header({
                 }`}
               >
                 Categorias
+              </button>
+              <button
+                onClick={() => onChangeShopperRoute('orders')}
+                className={`font-medium text-sm transition-colors ${
+                  shopperRoute === 'orders'
+                    ? 'text-blue-600 border-b-2 border-blue-600 pb-1'
+                    : 'text-slate-500 hover:text-blue-600'
+                }`}
+              >
+                Meus Pedidos
               </button>
               <button
                 onClick={() => onChangeProfile('courier')}
@@ -177,6 +191,38 @@ export default function Header({
             <Bell className="w-5 h-5" />
             <span className="absolute top-2 right-2 bg-emerald-500 rounded-full h-1.5 w-1.5"></span>
           </button>
+
+          {/* User Profile Info & Logout */}
+          {currentUser ? (
+            <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
+              <div className="hidden md:flex flex-col items-end">
+                <span className="text-xs font-bold text-slate-900 leading-tight">{currentUser.name}</span>
+                <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{currentUser.role === 'admin' ? 'Administrador' : currentUser.role === 'courier' ? 'Freteiro' : 'Cliente'}</span>
+              </div>
+              <img
+                src={currentUser.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuBdByCjDLUO_HPHGFdx_f7SO_6Ch71qiNXi7lYD15TiFKRBC_IRsBTM2AzP0xQjLzFzIItX5OBQ5VqpU5EIcY68l3qV4iy2G2fdZdKyncqgy91V0gULO1JXMGIBJ9Vdr0uyRKSHM_kSaKlDpveoN0SNEtXQRgd3-DPugRFPqaALJK8rK14sU5bY11heaXI7q94m8PJ3WsLiOapZuHTQWg3JL03PATYxokSK84vftUkru3EowCqirPym7xs5mZrRETkGML7mVlQaJJ4'}
+                alt={currentUser.name}
+                className="w-8 h-8 rounded-full object-cover border border-slate-200"
+              />
+              <button
+                onClick={onLogout}
+                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-full transition-all cursor-pointer"
+                title="Sair"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                onChangeProfile('shopper');
+                onChangeShopperRoute('login');
+              }}
+              className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-md shadow-blue-500/10 cursor-pointer flex items-center gap-1.5"
+            >
+              Entrar
+            </button>
+          )}
         </div>
       </div>
 

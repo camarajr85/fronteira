@@ -9,12 +9,14 @@ import { Product } from '../types';
 import { mockProducts, partnerStores, backgroundDeliveryVan } from '../data';
 
 interface HomeViewProps {
+  products: Product[];
   onSelectProduct: (product: Product) => void;
   onSearchQuery: (query: string) => void;
   onNavigateToResults: () => void;
 }
 
 export default function HomeView({
+  products,
   onSelectProduct,
   onSearchQuery,
   onNavigateToResults
@@ -61,7 +63,7 @@ export default function HomeView({
     onNavigateToResults();
   };
 
-  const featured = mockProducts.filter((p) => p.isOffer);
+  const featured = products.filter((p) => p.isOffer);
 
   return (
     <div className="flex flex-col gap-12 pb-16 animate-fade-in">

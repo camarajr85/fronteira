@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
-import { ShoppingCart, Trash2, X, Check, MapPin, ListFilter, CreditCard, ChevronRight, Store, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ShoppingCart, Trash2, X, Check, MapPin, ListFilter, CreditCard, ChevronRight, Store, AlertCircle, LogOut } from 'lucide-react';
 
 import { Product, Order, ApprovalRequest, TaxConfig, CartItem } from './types';
 import { mockProducts, mockOrders, mockApprovals } from './data';
@@ -16,27 +16,87 @@ import SearchResultsView from './components/SearchResultsView';
 import ProductDetailView from './components/ProductDetailView';
 import CourierDashboard from './components/CourierDashboard';
 import AdminDashboard from './components/AdminDashboard';
+import LoginView from './components/LoginView';
+import CheckoutModal from './components/CheckoutModal';
+import MyOrdersView from './components/MyOrdersView';
+import GeminiChat from './components/GeminiChat';
 
 export default function App() {
+  // Session authentication state
+  const [currentUser, setCurrentUser] = useState<{ id: string; email: string; name: string; role: 'shopper' | 'courier' | 'admin'; documentId?: string; avatar?: string } | null>(() => {
+    const session = localStorage.getItem('fronteira_session');
+    if (session) {
+      try {
+        return JSON.parse(session).user;
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  });
+
   // Global Profile Navigation Perspectives
   const [profile, setProfile] = useState<'shopper' | 'courier' | 'admin'>('shopper');
 
-  // Shopper Sub-route Navigator (home, results, detail)
-  const [shopperRoute, setShopperRoute] = useState<'home' | 'results' | 'detail'>('home');
+  // Shopper Sub-route Navigator (home, results, detail, orders, login)
+  const [shopperRoute, setShopperRoute] = useState<'home' | 'results' | 'detail' | 'orders' | 'login'>('home');
+  const [pendingProfileRedirect, setPendingProfileRedirect] = useState<'courier' | 'admin' | null>(null);
 
   // Dynamic products reference
+  const [products, setProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   // Cart properties local states
   const [cart, setCart] = useState<CartItem[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
+  const [checkoutModalOpen, setCheckoutModalOpen] = useState(false);
   const [checkoutSuccess, setCheckoutSuccess] = useState(false);
 
-  // Consolidated database reactive states (links Shopper, Courier, and Admin actions!)
-  const [orders, setOrders] = useState<Order[]>(mockOrders);
-  const [approvals, setApprovals] = useState<ApprovalRequest[]>(mockApprovals);
+  // Consolidated database reactive states
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [taxConfig, setTaxConfig] = useState<TaxConfig>({ marketplaceFee: 8.0, logisticsFee: 5.0 });
+  const [loading, setLoading] = useState(true);
+
+  // Load all data from API endpoints
+  const loadData = async () => {
+    try {
+      setLoading(true);
+      const [resProducts, resOrders, resApprovals, resTax] = await Promise.all([
+        fetch('/api/products').then((r) => r.json()),
+        fetch('/api/orders').then((r) => r.json()),
+        fetch('/api/approvals').then((r) => r.json()),
+        fetch('/api/tax-config').then((r) => r.json())
+      ]);
+      setProducts(resProducts);
+      setOrders(resOrders);
+      setApprovals(resApprovals);
+      setTaxConfig(resTax);
+    } catch (err) {
+      console.error('Erro ao carregar dados do servidor:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const [isRefreshingOrders, setIsRefreshingOrders] = useState(false);
+  const handleRefreshOrders = async () => {
+    setIsRefreshingOrders(true);
+    await loadData();
+    setIsRefreshingOrders(false);
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  // Sync profile when currentUser changes
+  useEffect(() => {
+    if (currentUser) {
+      setProfile(currentUser.role);
+    }
+  }, [currentUser]);
 
   // 1. Actions logic: Handle Product Selection trigger
   const handleSelectProduct = (product: Product) => {
@@ -45,64 +105,103 @@ export default function App() {
   };
 
   // 2. Actions logic: Handle Store B2B registration requests (from results screen banner)
-  const handleRegisterStoreRequest = (storeName: string, category: string) => {
-    const newReg: ApprovalRequest = {
+  const handleRegisterStoreRequest = async (storeName: string, category: string) => {
+    const newReg = {
       id: `app-${Date.now()}`,
       name: storeName,
       type: 'LOJA',
       documentId: 'CNPJ: Sob auditoria...',
       detail: `Distribuição de ${category} • CDE`,
-      date: 'Hoje, agora há pouco',
+      date: new Date().toLocaleDateString('pt-BR'),
       status: 'pending'
     };
-    setApprovals((prev) => [newReg, ...prev]);
+    try {
+      const response = await fetch('/api/approvals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newReg)
+      });
+      if (response.ok) {
+        const saved = await response.json();
+        setApprovals((prev) => [saved, ...prev]);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   // 3. Actions logic: Handle Admin approvals
-  const handleApproveValidation = (id: string) => {
-    setApprovals((prev) =>
-      prev.map((app) => (app.id === id ? { ...app, status: 'approved' } : app))
-    );
+  const handleApproveValidation = async (id: string) => {
+    try {
+      const response = await fetch(`/api/approvals/${id}/approve`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (response.ok) {
+        setApprovals((prev) =>
+          prev.map((app) => (app.id === id ? { ...app, status: 'approved' } : app))
+        );
+        loadData();
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   // 4. Actions logic: Handle Order production state advance (Admin advances order step)
-  const handleProgressOrderStatus = (orderId: string) => {
-    setOrders((prev) =>
-      prev.map((order) => {
-        if (order.id !== orderId) return order;
-        let nextStatus: Order['status'] = order.status;
-        let progress = order.progressPercent || 0;
+  const handleProgressOrderStatus = async (orderId: string) => {
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return;
 
-        if (order.status === 'Pago') {
-          nextStatus = 'Aguardando Freteiro';
-          progress = 25;
-        } else if (order.status === 'Aguardando Freteiro') {
-          nextStatus = 'Em Trânsito';
-          progress = 65;
-        } else if (order.status === 'Em Trânsito') {
-          nextStatus = 'Entregue';
-          progress = 100;
-        }
-        return { ...order, status: nextStatus, progressPercent: progress };
-      })
-    );
+    let nextStatus: Order['status'] = order.status;
+    let progress = order.progressPercent || 0;
+
+    if (order.status === 'Pago') {
+      nextStatus = 'Aguardando Freteiro';
+      progress = 25;
+    } else if (order.status === 'Aguardando Freteiro') {
+      nextStatus = 'Em Trânsito';
+      progress = 65;
+    } else if (order.status === 'Em Trânsito') {
+      nextStatus = 'Entregue';
+      progress = 100;
+    }
+
+    try {
+      const response = await fetch(`/api/orders/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: nextStatus, progressPercent: progress })
+      });
+      if (response.ok) {
+        const updated = await response.json();
+        setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   // 5. Actions logic: Handle Courier bidding (Apply to order)
-  const handleBidOrder = (orderId: string) => {
-    setOrders((prev) =>
-      prev.map((order) => {
-        if (order.id === orderId) {
-          return {
-            ...order,
-            status: 'Em Trânsito',
-            progressPercent: 35,
-            courierName: 'Ricardo Silva'
-          };
-        }
-        return order;
-      })
-    );
+  const handleBidOrder = async (orderId: string) => {
+    const courierName = currentUser?.name || 'Ricardo Silva';
+    try {
+      const response = await fetch(`/api/orders/${orderId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: 'Em Trânsito',
+          progressPercent: 35,
+          courierName
+        })
+      });
+      if (response.ok) {
+        const updated = await response.json();
+        setOrders((prev) => prev.map((o) => (o.id === orderId ? updated : o)));
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   // 6. Shopping Cart management mechanisms
@@ -146,31 +245,70 @@ export default function App() {
   };
 
   const handleCheckoutSubmit = () => {
+    setCheckoutModalOpen(true);
+  };
+
+  const handleCheckoutModalSubmit = async (shippingDetails: { address: string; recipientName: string }) => {
     if (cart.length === 0) return;
 
-    // Create real orders corresponding to the checkout!
-    const newOrders: Order[] = cart.map((item, idx) => ({
+    const newOrders: Order[] = cart.map((item) => ({
       id: `FR-${Math.floor(1000 + Math.random() * 9000)}`,
       productName: item.product.name,
       origin: 'Ciudad del Este (PY)',
-      destination: 'São Paulo, SP (BR)',
+      destination: shippingDetails.address,
       weight: 1.5,
       shippingFee: 145.00,
       totalValue: item.product.price * item.quantity,
       status: 'Pago',
       timeAgo: 'Agora mesmo',
-      buyerName: 'Pedro Cavalcanti',
-      buyerImage: 'https://lh3.googleusercontent.com/aida-public/AB6AXuBdByCjDLUO_HPHGFdx_f7SO_6Ch71qiNXi7lYD15TiFKRBC_IRsBTM2AzP0xQjLzFzIItX5OBQ5VqpU5EIcY68l3qV4iy2G2fdZdKyncqgy91V0gULO1JXMGIBJ9Vdr0uyRKSHM_kSaKlDpveoN0SNEtXQRgd3-DPugRFPqaALJK8rK14sU5bY11heaXI7q94m8PJ3WsLiOapZuHTQWg3JL03PATYxokSK84vftUkru3EowCqirPym7xs5mZrRETkGML7mVlQaJJ4',
+      buyerName: shippingDetails.recipientName || currentUser?.name || 'Pedro Cavalcanti',
+      buyerImage: currentUser?.avatar || 'https://lh3.googleusercontent.com/aida-public/AB6AXuBdByCjDLUO_HPHGFdx_f7SO_6Ch71qiNXi7lYD15TiFKRBC_IRsBTM2AzP0xQjLzFzIItX5OBQ5VqpU5EIcY68l3qV4iy2G2fdZdKyncqgy91V0gULO1JXMGIBJ9Vdr0uyRKSHM_kSaKlDpveoN0SNEtXQRgd3-DPugRFPqaALJK8rK14sU5bY11heaXI7q94m8PJ3WsLiOapZuHTQWg3JL03PATYxokSK84vftUkru3EowCqirPym7xs5mZrRETkGML7mVlQaJJ4',
       progressPercent: 12
     }));
 
-    setOrders((prev) => [...newOrders, ...prev]);
-    setCart([]);
-    setCartOpen(false);
-    setCheckoutSuccess(true);
-    setTimeout(() => {
-      setCheckoutSuccess(false);
-    }, 6000);
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newOrders)
+      });
+      if (response.ok) {
+        const savedOrders = await response.json();
+        setOrders((prev) => [...savedOrders, ...prev]);
+        setCart([]);
+        setCartOpen(false);
+        setCheckoutModalOpen(false);
+        setCheckoutSuccess(true);
+        setTimeout(() => {
+          setCheckoutSuccess(false);
+        }, 6000);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleUpdateTaxConfig = async (cfg: TaxConfig) => {
+    try {
+      const response = await fetch('/api/tax-config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg)
+      });
+      if (response.ok) {
+        const updated = await response.json();
+        setTaxConfig(updated);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('fronteira_session');
+    setCurrentUser(null);
+    setProfile('shopper');
+    setShopperRoute('home');
   };
 
   // Computed subtotal properties
@@ -228,11 +366,28 @@ export default function App() {
       <Header
         currentProfile={profile}
         onChangeProfile={(p) => {
+          if (p !== 'shopper') {
+            if (!currentUser) {
+              setPendingProfileRedirect(p);
+              setShopperRoute('login');
+              return;
+            }
+            if (currentUser.role !== p && currentUser.role !== 'admin') {
+              alert(`Acesso negado: seu perfil atual é ${currentUser.role === 'courier' ? 'Freteiro' : 'Cliente'}.`);
+              return;
+            }
+          }
           setProfile(p);
           setCartOpen(false);
         }}
         shopperRoute={shopperRoute}
-        onChangeShopperRoute={(r) => setShopperRoute(r)}
+        onChangeShopperRoute={(r) => {
+          if (r === 'orders' && !currentUser) {
+            setShopperRoute('login');
+            return;
+          }
+          setShopperRoute(r);
+        }}
         onSearch={(q) => {
           setSearchQuery(q);
           setShopperRoute('results');
@@ -240,6 +395,8 @@ export default function App() {
         cartCount={cartTotalItemCount}
         onOpenCart={() => setCartOpen(true)}
         searchQuery={searchQuery}
+        currentUser={currentUser}
+        onLogout={handleLogout}
       />
 
       {/* 2. Main screen layouts render block */}
@@ -248,6 +405,7 @@ export default function App() {
           <>
             {shopperRoute === 'home' && (
               <HomeView
+                products={products}
                 onSelectProduct={handleSelectProduct}
                 onSearchQuery={(q) => setSearchQuery(q)}
                 onNavigateToResults={() => setShopperRoute('results')}
@@ -256,6 +414,7 @@ export default function App() {
             
             {shopperRoute === 'results' && (
               <SearchResultsView
+                products={products}
                 onSelectProduct={handleSelectProduct}
                 onRegisterStoreRequest={handleRegisterStoreRequest}
                 searchQuery={searchQuery}
@@ -268,6 +427,31 @@ export default function App() {
                 onBack={() => setShopperRoute('results')}
                 onAddToCart={handleAddToCart}
               />
+            )}
+
+            {shopperRoute === 'orders' && (
+              <MyOrdersView
+                orders={orders}
+                onBack={() => setShopperRoute('home')}
+                onRefresh={handleRefreshOrders}
+                isRefreshing={isRefreshingOrders}
+              />
+            )}
+
+            {shopperRoute === 'login' && (
+              <div className="max-w-4xl mx-auto flex items-center justify-center py-6">
+                <LoginView
+                  onLogin={(user) => {
+                    setCurrentUser(user);
+                    if (pendingProfileRedirect) {
+                      setProfile(pendingProfileRedirect);
+                      setPendingProfileRedirect(null);
+                    } else {
+                      setShopperRoute('home');
+                    }
+                  }}
+                />
+              </div>
             )}
           </>
         )}
@@ -430,9 +614,20 @@ export default function App() {
             )}
 
           </div>
-
         </div>
       )}
+
+      {/* Checkout Modal component */}
+      <CheckoutModal
+        isOpen={checkoutModalOpen}
+        onClose={() => setCheckoutModalOpen(false)}
+        cartItems={cart}
+        taxConfig={taxConfig}
+        onSubmit={handleCheckoutModalSubmit}
+      />
+
+      {/* Floating Gemini Chatbot widget */}
+      {profile === 'shopper' && <GeminiChat />}
 
     </div>
   );

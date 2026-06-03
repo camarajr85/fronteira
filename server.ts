@@ -28,14 +28,33 @@ app.use(express.json());
 
 // Initialize Local JSON Database
 function initDB() {
+  const initialData = {
+    products: mockProducts,
+    orders: mockOrders,
+    approvals: mockApprovals,
+    taxConfig: { marketplaceFee: 8.0, logisticsFee: 5.0 },
+    users: [
+      { id: 'usr-admin', email: 'admin@fronteira.com', password: 'admin123', name: 'Administrador', role: 'admin' },
+      { id: 'usr-courier', email: 'freteiro@fronteira.com', password: 'freteiro123', name: 'Ricardo Silva', role: 'courier' }
+    ]
+  };
+
   if (!fs.existsSync(DB_FILE)) {
-    const initialData = {
-      products: mockProducts,
-      orders: mockOrders,
-      approvals: mockApprovals,
-      taxConfig: { marketplaceFee: 8.0, logisticsFee: 5.0 }
-    };
     fs.writeFileSync(DB_FILE, JSON.stringify(initialData, null, 2), 'utf-8');
+  } else {
+    try {
+      const current = JSON.parse(fs.readFileSync(DB_FILE, 'utf-8'));
+      let updated = false;
+      if (!current.users) {
+        current.users = initialData.users;
+        updated = true;
+      }
+      if (updated) {
+        fs.writeFileSync(DB_FILE, JSON.stringify(current, null, 2), 'utf-8');
+      }
+    } catch (e) {
+      fs.writeFileSync(DB_FILE, JSON.stringify(initialData, null, 2), 'utf-8');
+    }
   }
 }
 
@@ -53,6 +72,94 @@ function writeDB(data: any) {
 // ------------------------------------------------------------------
 // REST APIs Endpoints
 // ------------------------------------------------------------------
+
+// 0. Authentication APIs
+app.post('/api/auth/register', (req, res) => {
+  try {
+    const { email, password, name, role, documentId, detail } = req.body;
+    if (!email || !password || !name || !role) {
+       res.status(400).json({ error: 'Dados obrigatórios ausentes (email, senha, nome, perfil)' });
+       return;
+    }
+
+    const db = readDB();
+    if (db.users.some((u: any) => u.email === email)) {
+       res.status(400).json({ error: 'E-mail já cadastrado' });
+       return;
+    }
+
+    const newUser = {
+      id: `usr-${Date.now()}`,
+      email,
+      password,
+      name,
+      role,
+      documentId: documentId || '',
+      detail: detail || ''
+    };
+
+    db.users.push(newUser);
+
+    // If registering a courier or store, also put it in approvals queue!
+    if (role === 'courier') {
+      const approvalReq = {
+        id: `app-${Date.now()}`,
+        name: name,
+        type: 'FRETEIRO',
+        documentId: documentId || 'Sob auditoria...',
+        detail: detail || 'Gestão Logística Fronteira local',
+        date: new Date().toLocaleDateString('pt-BR'),
+        status: 'pending'
+      };
+      db.approvals = [approvalReq, ...db.approvals];
+    }
+
+    writeDB(db);
+    res.status(201).json({ id: newUser.id, email: newUser.email, name: newUser.name, role: newUser.role });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao registrar usuário' });
+  }
+});
+
+app.post('/api/auth/login', (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+       res.status(400).json({ error: 'E-mail e senha são obrigatórios' });
+       return;
+    }
+
+    const db = readDB();
+    const user = db.users.find((u: any) => u.email === email && u.password === password);
+    if (!user) {
+       res.status(401).json({ error: 'E-mail ou senha incorretos' });
+       return;
+    }
+
+    // Check if user is courier and pending approval
+    if (user.role === 'courier') {
+      const approval = db.approvals.find((a: any) => a.name === user.name && a.type === 'FRETEIRO');
+      if (approval && approval.status === 'pending') {
+         res.status(403).json({ error: 'Aguardando aprovação de cadastro pelo Administrador' });
+         return;
+      }
+    }
+
+    res.json({
+      token: `mock-token-${user.id}`,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        documentId: user.documentId,
+        avatar: user.role === 'admin' ? 'https://lh3.googleusercontent.com/aida-public/AB6AXuDI10iVHaqhuwDyMCb9CWDmD9bIb0cGT4hqDWr6jVEO2cC-kyOMbRvdOuREmoheOmuWE7o3hUL-dGnWljU4w6Y2ZT0nnvVY3Q1Cw70r4XTyxy6rwgWI48wQtR9YkM-UTw28cF5VbXMYdLV1eecGB4kl1WLDJzwOJv6i3azON9_e01ILv7OklH0YpQ3pq-w5DvZ_jLECNRRzR0iZqQXBRncUlbD7rD1BUIwd1yRq3yyIWuXytNHd4yS_KuzvolaxMt0aSK-k5mQPOxU' : (user.role === 'courier' ? 'https://lh3.googleusercontent.com/aida-public/AB6AXuC52coz2EeYc_eeAy4_KtHYIdy_wNHRUM_DaM28bjqixi0I66YqFrQe3v5NeuXofpWG2pO5_EqEXWGbs_j13LD3mYbgalQsAMHvkz9yaV0PljeJoHamkv5Hc7ZVYWtlNYG07mdOfDK4U1plNQLfBGCtnRccZvkbC-g_AmqjWeFAO4TBlIeRTC-5bkDCOAXEXDTbf3WFEBolgXIC9-fl8BmKCd1JEAGs-i7GNu1IgCcetEO5oZpuPL05BPkAmAhLyjl4hyFO7TKmxMg' : 'https://lh3.googleusercontent.com/aida-public/AB6AXuBdByCjDLUO_HPHGFdx_f7SO_6Ch71qiNXi7lYD15TiFKRBC_IRsBTM2AzP0xQjLzFzIItX5OBQ5VqpU5EIcY68l3qV4iy2G2fdZdKyncqgy91V0gULO1JXMGIBJ9Vdr0uyRKSHM_kSaKlDpveoN0SNEtXQRgd3-DPugRFPqaALJK8rK14sU5bY11heaXI7q94m8PJ3WsLiOapZuHTQWg3JL03PATYxokSK84vftUkru3EowCqirPym7xs5mZrRETkGML7mVlQaJJ4')
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao processar login' });
+  }
+});
 
 // 1. Products APIs
 app.get('/api/products', (req, res) => {

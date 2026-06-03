@@ -9,12 +9,14 @@ import { Product } from '../types';
 import { mockProducts } from '../data';
 
 interface SearchResultsViewProps {
+  products: Product[];
   onSelectProduct: (product: Product) => void;
   onRegisterStoreRequest: (storeName: string, category: string) => void;
   searchQuery: string;
 }
 
 export default function SearchResultsView({
+  products,
   onSelectProduct,
   onRegisterStoreRequest,
   searchQuery
@@ -48,7 +50,7 @@ export default function SearchResultsView({
 
   // Filter computation logic - reactively derived
   const filteredProducts = useMemo(() => {
-    return mockProducts.filter((product) => {
+    return products.filter((product) => {
       // 1. Keyword query filter (Matches names/category)
       const matchesQuery =
         searchQuery.trim() === '' ||
